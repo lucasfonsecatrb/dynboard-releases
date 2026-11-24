@@ -342,3 +342,34 @@ body.drawing-on #toast{bottom:140px}
 .vhint{color:rgba(255,255,255,.45);font-size:12px;padding:0 8px}
 @media(max-width:1000px){.vhint{display:none}}
 @media(max-width:760px){.vctl{bottom:74px}.vstage video,.vstage img{bottom:130px;height:calc(100% - 130px)}}
+
+/* ---------- toque (celular e tablet) ---------- */
+html{touch-action:manipulation;overscroll-behavior:none}
+body{overscroll-behavior:none}
+*{-webkit-tap-highlight-color:transparent}
+body.nopanel #panel{transform:translateY(calc(100% + 160px));visibility:hidden}
+@media(pointer:coarse){
+  body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none}
+  input,textarea,[contenteditable]{-webkit-user-select:text;user-select:text}
+  /* letra de 16px nos campos: o iPhone dá zoom sozinho em campo com letra menor */
+  input,textarea,select{font-size:16px!important}
+  /* alvos maiores para o dedo */
+  .jack{width:22px;height:22px;margin-top:-11px;right:-11px}
+  .jack::before{content:'';position:absolute;inset:-14px;border-radius:50%}
+  #wires .hit{stroke-width:30}
+  .icon{width:36px;height:36px}
+  .chip .icon{width:34px;height:34px}
+  .tb{padding:10px 12px}
+  .pi{padding-top:11px;padding-bottom:11px}
+  .pi .rm{display:grid;width:30px;height:30px}
+  .pi .ct{display:none}
+  .node video,.node img{-webkit-user-drag:none;pointer-events:none}
+}
+@media(max-width:760px){
+  /* painel de detalhes vira uma gaveta embaixo, sem cobrir o quadro inteiro */
+  #panel{top:auto;left:8px;right:8px;width:auto;bottom:calc(118px + env(safe-area-inset-bottom));max-height:46vh;transform:translateY(calc(100% + 160px))}
+  .dock{bottom:calc(8px + env(safe-area-inset-bottom))}
+  .top{top:calc(8px + env(safe-area-inset-top))}
+  #side{padding-top:calc(16px + env(safe-area-inset-top));padding-bottom:calc(12px + env(safe-area-inset-bottom))}
+  .drawbar{bottom:calc(118px + env(safe-area-inset-bottom))}
+}
