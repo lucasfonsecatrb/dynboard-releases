@@ -3,6 +3,7 @@
 'use strict';
 const store = window.DynStore, Z = window.DynZip;
 const DESK = store.kind === 'desktop';
+const COARSE = matchMedia('(pointer:coarse)').matches; /* tela de toque */
 const PAL = ['#EE4E9B', '#F5B800', '#2B50E8', '#17A26A', '#F2541B', '#8A5CF6'];
 const CAB = ['#F2541B', '#2B50E8', '#F5B800', '#EE4E9B', '#17A26A', '#1B1C1F'];
 const PLAT = [
@@ -358,12 +359,13 @@ function wire(A, B) {
 }
 function renderWires() {
   if (!cur) return; let o = ''; computePorts();
+  const GR = COARSE ? Math.max(18, Math.round(24 / V().k)) : 13; /* ponta do cabo: maior para o dedo */
   for (const e of proj().edges) {
     if (e.id === rewiring) continue; const a = getNode(e.a), b = getNode(e.b); if (!a || !b) continue;
     const { A, B } = endsOf(e), c = wire(A, B), col = edgeColor(e);
     o += `<g class="${sel && sel.kind === 'edge' && sel.id === e.id ? 'sel' : ''}"><path class="shade" d="${c.d}"/><path class="w" stroke="${col}" d="${c.d}"/>${e.label ? `<text x="${c.mx}" y="${c.my - 9}">${esc(e.label)}</text>` : ''}<path class="hit" data-id="${e.id}" d="${c.d}"/>
     <circle class="plug" cx="${A.x}" cy="${A.y}" r="5.5" fill="${col}"/><circle class="plug" cx="${B.x}" cy="${B.y}" r="5.5" fill="${col}"/>
-    <circle class="grab" data-id="${e.id}" data-end="a" cx="${A.x}" cy="${A.y}" r="13"><title>Puxe para soltar o cabo</title></circle><circle class="grab" data-id="${e.id}" data-end="b" cx="${B.x}" cy="${B.y}" r="13"><title>Puxe para soltar o cabo</title></circle></g>`;
+    <circle class="grab" data-id="${e.id}" data-end="a" cx="${A.x}" cy="${A.y}" r="${GR}"><title>Puxe para soltar o cabo</title></circle><circle class="grab" data-id="${e.id}" data-end="b" cx="${B.x}" cy="${B.y}" r="${GR}"><title>Puxe para soltar o cabo</title></circle></g>`;
   }
   if (tmp) {
     if (tmp.dashed) o += `<path class="tmp" d="${tmp.d}"/>`;
@@ -450,6 +452,7 @@ function setSelection(nodes, strokes = []) {
   paintSel();
 }
 function select(kind, id) {
+  holdPanel(false);
   if (kind === 'node') { if (sel && sel.kind === 'node' && sel.id === id && msel.size === 1) return; setSelection([id]); return; }
   if (kind === 'edge') { if (sel && sel.kind === 'edge' && sel.id === id) return; msel = new Set(); ssel = new Set(); sel = { kind: 'edge', id }; paintSel(); return; }
   if (!sel && !msel.size && !ssel.size) return;
@@ -464,6 +467,9 @@ function togglePlay(id) {
 }
 
 /* ---------- interação ---------- */
+/* No toque, o painel de detalhes só abre com um toque parado no card; arrastar não abre. */
+const holdPanel = on => document.body.classList.toggle('nopanel', !!on);
+let lastTap = null, lastTouchAt = 0;
 const touches = new Map();
 vp.addEventListener('pointerdown', e => {
   if (e.button === 1 && cur) { const v = V(); drag = { mode: 'pan', sx: e.clientX, sy: e.clientY, vx: v.x, vy: v.y }; vp.classList.add('panning'); vp.setPointerCapture(e.pointerId); e.preventDefault(); return; }
@@ -486,17 +492,18 @@ vp.addEventListener('pointerdown', e => {
     else { drag = { mode: 'erase', removed: [] }; eraseAt(w, drag.removed); }
     vp.setPointerCapture(e.pointerId); e.preventDefault(); return;
   }
-  const hd = t.closest('.jack'); if (hd) { drag = { mode: 'link', from: hd.closest('.node').dataset.id }; vp.setPointerCapture(e.pointerId); e.preventDefault(); return; }
+  const hd = t.closest('.jack'); if (hd) { if (e.pointerType === 'touch') holdPanel(true); drag = { mode: 'link', from: hd.closest('.node').dataset.id }; vp.setPointerCapture(e.pointerId); e.preventDefault(); return; }
   if (t.closest('button,a,input,textarea,select')) return;
   const nd = t.closest('.node');
   if (nd) {
     const n = getNode(nd.dataset.id);
     if (e.shiftKey || e.ctrlKey || e.metaKey) { toggleInSel(n.id); return; }
     if (!msel.has(n.id)) select('node', n.id);
+    if (e.pointerType === 'touch') holdPanel(true);
     const w = toWorld(e.clientX, e.clientY), P = proj();
     const group = P.nodes.filter(x => msel.has(x.id)).map(x => ({ n: x, x: x.x, y: x.y }));
     const strokes = P.strokes.filter(s => ssel.has(s.id)).map(s => ({ s, p: s.p.map(q => q.slice()) }));
-    drag = { mode: 'node', id: n.id, group, strokes, wx: w.x, wy: w.y, sx: e.clientX, sy: e.clientY, moved: false, thumb: !!t.closest('.thumb') && msel.size === 1 };
+    drag = { mode: 'node', id: n.id, group, strokes, wx: w.x, wy: w.y, sx: e.clientX, sy: e.clientY, moved: false, slop: e.pointerType === 'touch' ? 10 : 5, thumb: !!t.closest('.thumb') && msel.size === 1 };
     vp.setPointerCapture(e.pointerId); return;
   }
   const gr = t.closest('.grab'); if (gr) { startRewire(gr.dataset.id, gr.dataset.end, e); return; }
@@ -542,7 +549,7 @@ vp.addEventListener('pointermove', e => {
   else if (drag.mode === 'erase') eraseAt(toWorld(e.clientX, e.clientY), drag.removed);
   else if (drag.mode === 'pan') { const v = V(); v.x = drag.vx + e.clientX - drag.sx; v.y = drag.vy + e.clientY - drag.sy; applyView(); }
   else if (drag.mode === 'node') {
-    if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 5) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < (drag.slop || 5)) return;
     if (!drag.moved) { drag.moved = true; checkpoint(); }
     const w = toWorld(e.clientX, e.clientY), dx = w.x - drag.wx, dy = w.y - drag.wy;
     for (const g of drag.group) { g.n.x = g.x + dx; g.n.y = g.y + dy; const el = nodesEl.querySelector(`[data-id="${g.n.id}"]`); if (el) { el.style.left = g.n.x + 'px'; el.style.top = g.n.y + 'px'; el.classList.add('dragging'); } }
@@ -555,7 +562,7 @@ vp.addEventListener('pointermove', e => {
   }
   else if (drag.mode === 'link') { const w = toWorld(e.clientX, e.clientY), a = edgePt(getNode(drag.from), w); tmp = { dashed: true, d: cable(a, w).d }; hilite(e, drag.from); renderWires(); }
   else if (drag.mode === 'rewire') {
-    if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < 5) return;
+    if (!drag.moved && Math.hypot(e.clientX - drag.sx, e.clientY - drag.sy) < (drag.slop || 5)) return;
     if (!drag.moved) { drag.moved = true; rewiring = drag.id; vp.classList.add('rewiring'); if (sel && sel.kind === 'edge' && sel.id === drag.id) select(null); }
     const w = toWorld(e.clientX, e.clientY), A = edgePt(getNode(drag.keep), w); hilite(e, drag.keep);
     tmp = { d: cable(A, w).d, A, x: w.x, y: w.y, color: drag.color, gone: !hlEl }; renderWires();
@@ -563,7 +570,8 @@ vp.addEventListener('pointermove', e => {
 });
 function startRewire(id, end, e) {
   const ed = proj().edges.find(x => x.id === id); if (!ed) return;
-  drag = { mode: 'rewire', id, end, keep: end === 'a' ? ed.b : ed.a, orig: ed[end], color: edgeColor(ed), sx: e.clientX, sy: e.clientY, moved: false };
+  drag = { mode: 'rewire', id, end, keep: end === 'a' ? ed.b : ed.a, orig: ed[end], color: edgeColor(ed), sx: e.clientX, sy: e.clientY, moved: false, slop: e.pointerType === 'touch' ? 10 : 5 };
+  if (e.pointerType === 'touch') holdPanel(true);
   vp.setPointerCapture(e.pointerId); e.preventDefault();
 }
 function retract(d, done) {
@@ -576,8 +584,19 @@ function retract(d, done) {
 function endDrag(e) {
   touches.delete(e.pointerId);
   if (!drag) return;
-  if (drag.mode === 'pinch') { if (touches.size < 2) { drag = null; markDirty(); } return; }
+  if (drag.mode === 'pinch') { if (touches.size < 2) { drag = null; markDirty(); renderWires(); } return; }
   const d = drag; drag = null;
+  if (e.pointerType === 'touch') {
+    lastTouchAt = Date.now();
+    const still = e.type === 'pointerup' && !d.moved && d.sx != null && Math.hypot(e.clientX - d.sx, e.clientY - d.sy) < 12;
+    if (still && (d.mode === 'node' || d.mode === 'rewire')) holdPanel(false);
+    /* dois toques seguidos no mesmo lugar valem como dois cliques (o iPhone não avisa sozinho) */
+    if (still && (d.mode === 'node' || d.mode === 'pan')) {
+      const now = Date.now(), x = e.clientX, y = e.clientY;
+      if (lastTap && now - lastTap.t < 380 && Math.hypot(x - lastTap.x, y - lastTap.y) < 32) { lastTap = null; setTimeout(() => boardDouble(x, y, null), 0); }
+      else lastTap = { t: now, x, y };
+    } else lastTap = null;
+  }
   if (d.mode === 'draw') { if (drawing) { checkpoint(); proj().strokes.push(drawing); drawing = null; touch(); renderInk(); updCounts(); } return; }
   if (d.mode === 'erase') { if (d.removed.length) { touch(); updCounts(); } return; }
   if (d.mode === 'marquee') { $('#marquee').hidden = true; finishMarquee(d, e); return; }
@@ -612,16 +631,19 @@ vp.addEventListener('click', e => {
   const b = e.target.closest('[data-open]'); if (b && S.projects[b.dataset.open]) { openProject(b.dataset.open, true); return; }
   const a = e.target.closest('[data-act]'); if (a) { const nd = a.closest('.node'); if (nd) nodeAction(a.dataset.act, nd.dataset.id); }
 });
-vp.addEventListener('dblclick', e => {
+function boardDouble(x, y, fallback) {
   if (!cur || drawMode) return;
   /* o quadro captura o ponteiro para arrastar, então o alvo real vem da posição do mouse */
-  const under = document.elementFromPoint(e.clientX, e.clientY) || e.target;
+  const under = document.elementFromPoint(x, y) || fallback; if (!under || !vp.contains(under)) return;
   if (under.closest('button,a,input,textarea,.jack')) return;
   const f = under.closest('.node.folder');
   if (f) { const n = getNode(f.dataset.id); if (S.projects[n.target]) openProject(n.target, true); return; }
   const mv = under.closest('.node.video,.node.image'); if (mv) { openViewer(mv.dataset.id); return; }
-  if (!under.closest('.node')) { const w = toWorld(e.clientX, e.clientY); addNote(w.x - 107, w.y - 40); }
-});
+  if (!under.closest('.node')) { const w = toWorld(x, y); addNote(w.x - 107, w.y - 40); }
+}
+vp.addEventListener('dblclick', e => { if (Date.now() - lastTouchAt < 800) return; boardDouble(e.clientX, e.clientY, e.target); });
+/* segurar o dedo não abre o menu do navegador em cima do quadro */
+vp.addEventListener('contextmenu', e => { if (Date.now() - lastTouchAt < 1500 || touches.size) e.preventDefault(); });
 vp.addEventListener('wheel', e => { if (!cur) return; e.preventDefault(); zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * (e.ctrlKey ? .01 : .0015))); }, { passive: false });
 document.addEventListener('paste', e => {
   if (!cur || e.target.closest?.('input,textarea')) return;
@@ -744,6 +766,13 @@ function runDownload(pid, nid) {
   if (pid === cur) refreshNode(nid);
   return store.download(pid, nid, n.url).then(r => {
     const m = nodeIn(pid, nid); if (!m) return;
+    if (r.kind === 'image') { /* o link era de foto, não de vídeo: o card vira imagem */
+      m.type = 'image'; m.status = 'done'; m.file = r.file; m.size = r.size || 0; if (r.w && r.h) { m.w = r.w; m.h = r.h; }
+      delete m.thumb; delete m.dur; delete m.progress; delete m.error;
+      if (r.title && m.title === platOf(m.platform).t) m.title = r.title;
+      touch(pid); if (pid === cur) { refreshNode(nid); if (sel && sel.id === nid) renderPanel(); updCounts(); }
+      toast('Imagem guardada: ' + m.title); return;
+    }
     m.status = 'done'; m.file = r.file; m.thumb = r.thumb || m.thumb; m.size = r.size || 0; m.dur = r.duration || m.dur; if (r.w && r.h) { m.w = r.w; m.h = r.h; }
     if (r.title && m.title === platOf(m.platform).t) m.title = r.title;
     touch(pid); if (pid === cur) { refreshNode(nid); if (sel && sel.id === nid) renderPanel(); }
@@ -1229,4 +1258,34 @@ if (!DESK && 'serviceWorker' in navigator && /^https?:$/.test(location.protocol)
 
 window.__dyn = { S, store, flush, route }; // usado nos testes
 route(prefs.last);
+
+/* ---------- receber links de outros apps (Compartilhar → DynBoard, ex.: Pinterest, Instagram, YouTube) ---------- */
+function sharedLinks(text) {
+  return [...new Set((String(text || '').match(/https?:\/\/[^\s<>"']+/gi) || []).map(u => u.replace(/[)\].,;!?]+$/, '')))];
+}
+function receiveShared(text) {
+  const urls = sharedLinks(text);
+  if (!urls.length) { toast('Não achei um link no que foi compartilhado.'); return; }
+  const put = pid => { if (pid !== cur) openProject(pid); setTimeout(() => addLinks(urls.join(' ')), 60); };
+  const ids = Object.keys(S.projects).sort(byName);
+  if (!ids.length) { put(createProject('Recebidos')); return; }
+  const label = x => [...ancestors(x), x].map(a => S.projects[a].name).join(' / ');
+  const def = S.projects[cur] ? cur : ids[0];
+  modal({ title: urls.length > 1 ? `Guardar ${urls.length} links` : 'Guardar link', ok: 'Adicionar', body: `
+    <div class="muted" style="word-break:break-all">${esc(urls[0].slice(0, 90))}${urls.length > 1 ? ` e mais ${urls.length - 1}` : ''}</div>
+    <div class="fld"><label for="m-dest">Em qual projeto?</label><select id="m-dest" name="dest">${ids.map(x => `<option value="${x}" ${x === def ? 'selected' : ''}>${esc(label(x))}</option>`).join('')}<option value="+">Novo projeto…</option></select></div>
+    <div class="fld" id="m-newwrap" hidden><label for="m-newname">Nome do projeto novo</label><input id="m-newname" name="newname" placeholder="Ex.: Referências do clipe"></div>`,
+    onOpen: f => { f.dest.onchange = () => { $('#m-newwrap').hidden = f.dest.value !== '+'; if (f.dest.value === '+') f.newname.focus(); }; },
+    onOk: f => {
+      if (f.dest.value === '+') { const name = f.newname.value.trim(); if (!name) { f.newname.focus(); return false; } put(createProject(name)); }
+      else put(f.dest.value);
+    } });
+}
+(function () {
+  let sp; try { sp = new URLSearchParams(location.search); } catch (e) { return; }
+  const parts = ['url', 'text', 'title'].map(k => sp.get(k)).filter(Boolean);
+  if (!parts.length) return;
+  try { history.replaceState(null, '', location.pathname); } catch (e) { /* endereço fica como está */ }
+  setTimeout(() => receiveShared(parts.join(' ')), 150);
+})();
 })();
